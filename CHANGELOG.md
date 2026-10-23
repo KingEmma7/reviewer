@@ -18,6 +18,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `--no-untracked` reviews tracked working-tree changes only, keeping an empty
   view when there are none. API clients can pass `untracked: false` to
   `POST /api/load-repo`.
+  Saved reviews, JSON exports, agent prompts and text reviews retain and explain
+  that tracked-only comparison, including when older comments came from another view.
 
 ## [2.14.1] - 2026-10-18
 

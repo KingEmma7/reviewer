@@ -383,12 +383,13 @@ test('export run from a subdirectory finds the repository review', async t => {
  * @param {string} origin
  * @param {string} repoPath
  * @param {object[]} comments
+ * @param {object} [scope]
  */
-async function submitThrough(origin, repoPath, comments) {
+async function submitThrough(origin, repoPath, comments, scope = {}) {
   const { repoId } = await (await fetch(`${origin}/api/load-repo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repoPath })
+    body: JSON.stringify({ repoPath, ...scope })
   })).json();
 
   await fetch(`${origin}/api/save-comments`, {
@@ -425,6 +426,48 @@ test('submitting a review writes it to stdout and the command exits', async t =>
   assert.match(piped, /^\n?# Code review to address/);
   assert.match(piped, /Needs a test\./);
   assert.match(piped, /app\.js/);
+});
+
+test('tracked-only scope survives command handoff and later filtered exports', async t => {
+  const repoPath = await createTempRepo();
+  t.after(() => cleanup(repoPath));
+  await commitFiles(repoPath, { 'app.js': 'before\n', 'other.js': 'before\n' }, 'initial');
+  await writeFiles(repoPath, {
+    'app.js': 'after\n', 'other.js': 'after\n', 'scratch.js': 'untracked\n'
+  });
+  const comments = ['app.js', 'other.js'].map(file => ({
+    file, line: 1, lineContent: 'after', text: `Check ${file}.`
+  }));
+
+  const { url, child, stdout } = await serve([repoPath, '--no-untracked']);
+  t.after(() => child.kill('SIGKILL'));
+  const address = new URL(url);
+  assert.equal(address.searchParams.get('untracked'), '0');
+  const closed = new Promise(resolve => child.once('close', resolve));
+  const submitted = await submitThrough(address.origin, address.searchParams.get('repo'), comments, {
+    untracked: address.searchParams.get('untracked') !== '0'
+  });
+  assert.equal(await closed, 0);
+  assert.equal(submitted.review.untracked, false);
+  assert.match(stdout(), /Comparison: tracked changes in the working tree/);
+  assert.match(stdout(), /Untracked files are excluded from this comparison/);
+  assert.match(stdout(), /Saved comments are shared between review views/);
+
+  for (const file of [null, 'app.js']) {
+    const args = ['export', repoPath, ...(file ? ['--file', file] : [])];
+    const json = await run(args);
+    assert.equal(json.code, 0, json.stderr);
+    const document = JSON.parse(json.stdout);
+    assert.equal(document.mode, 'working');
+    assert.equal(document.untracked, false);
+    assert.deepEqual(document.comments.map(comment => comment.file), file ? [file] : ['app.js', 'other.js']);
+
+    const prompt = await run([...args, '--format', 'prompt']);
+    assert.equal(prompt.code, 0, prompt.stderr);
+    assert.match(prompt.stdout, /Comparison: tracked changes in the working tree/);
+    assert.match(prompt.stdout, /Untracked files are excluded from this comparison/);
+    assert.match(prompt.stdout, /Saved comments are shared between review views/);
+  }
 });
 
 test('nothing but the review reaches stdout', async t => {

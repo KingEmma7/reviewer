@@ -16,7 +16,7 @@ const { collectWorkingTreeChanges, describeWorkingChanges, collectStagedChanges,
 const { SessionStore } = require('./lib/sessions');
 const { normalizeComments } = require('./lib/comments');
 const { formatReview, reviewFilename, commentsFilename } = require('./lib/review');
-const { buildReviewDocument } = require('./lib/agent');
+const { buildReviewDocument, describeScope } = require('./lib/agent');
 const { readSavedComments, ReviewOwnershipError } = require('./lib/store');
 const { repoRoot } = require('./lib/repo');
 const { browse } = require('./lib/browse');
@@ -915,7 +915,7 @@ function createApp(options = {}) {
         }
       }
 
-      const repoId = sessions.create(root, mode, range);
+      const repoId = sessions.create(root, mode, range, untracked);
       sessions.get(repoId).foldedDirectories = new Map(
         files.filter(file => file.directory).map(file => [file.path, file.fileCount])
       );
@@ -1035,6 +1035,7 @@ function createApp(options = {}) {
         lastUpdated: new Date().toISOString(),
         mode: session.mode,
         range: session.range,
+        ...(session.untracked === false ? { untracked: false } : {}),
         comments: normalized
       };
 
@@ -1083,7 +1084,6 @@ function createApp(options = {}) {
       }
 
       const generatedAt = new Date();
-      const reviewContent = formatReview({ repoPath: session.repoPath, comments, generatedAt });
       const filename = reviewFilename(session.repoPath, generatedAt);
 
       // The commit is worth recording for anything acting on the review later:
@@ -1099,7 +1099,12 @@ function createApp(options = {}) {
         head,
         branch,
         mode: session.mode,
-        range: session.range
+        range: session.range,
+        untracked: session.untracked
+      });
+      const reviewContent = formatReview({
+        repoPath: session.repoPath, comments, generatedAt,
+        scope: document.untracked === false ? describeScope(document) : null
       });
       const documentFilename = filename.replace(/\.txt$/, '.json');
 

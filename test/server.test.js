@@ -228,6 +228,58 @@ test('POST /api/load-repo rejects non-boolean untracked values', async t => {
   }
 });
 
+test('a tracked-only review retains its scope through save, submit, reload and later export', async t => {
+  const server = await startTestServer();
+  const repoPath = await createTempRepo();
+  t.after(async () => { await server.close(); await cleanup(repoPath); });
+  await commitFiles(repoPath, { 'app.js': 'before\n' }, 'initial');
+  await writeFiles(repoPath, { 'app.js': 'after\n', 'scratch.txt': 'older note\n' });
+  const post = async (route, body) => {
+    const response = await fetch(`${server.url}/api/${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const oldComment = { file: 'scratch.txt', line: 1, lineContent: 'older note', text: 'Keep this note.' };
+  const ordinary = await loadRepo(server.url, repoPath);
+  await post('save-comments', { repoId: ordinary.repoId, comments: [oldComment] });
+  const { body: filtered } = await loadScope(server.url, { repoPath, untracked: false });
+  assert.deepEqual(filtered.files, [{ path: 'app.js', status: 'M' }]);
+  const inherited = await (await fetch(`${server.url}/api/load-comments/${filtered.repoId}`)).json();
+  assert.deepEqual(inherited.comments, [oldComment]);
+  await post('save-comments', { repoId: filtered.repoId, comments: [...inherited.comments,
+    { file: 'app.js', line: 1, lineContent: 'after', text: 'Check this edit.' }
+  ] });
+  const savedPath = path.join(server.reviewsDir, commentsFilename(repoPath));
+  const saved = JSON.parse(await fs.readFile(savedPath, 'utf8'));
+  assert.equal(saved.untracked, false);
+  const submitted = await post('submit-review', { repoId: filtered.repoId });
+  const storedDocument = JSON.parse(await fs.readFile(path.join(server.reviewsDir, submitted.documentFilename), 'utf8'));
+  for (const document of [submitted.review, storedDocument, await loadReviewDocument(server.reviewsDir, repoPath)]) {
+    assert.equal(document.mode, 'working');
+    assert.equal(document.untracked, false);
+    assert.deepEqual(document.comments.map(c => c.file).sort(), ['app.js', 'scratch.txt']);
+    assert.match(formatPrompt(document), /Untracked files are excluded from this comparison/);
+    assert.match(formatPrompt(document), /Saved comments are shared between review views/);
+  }
+  assert.match(submitted.reviewContent, /Untracked files are excluded from this comparison/);
+  assert.match(submitted.reviewContent, /Saved comments are shared between review views/);
+  assert.equal(await fs.readFile(submitted.reviewPath, 'utf8'), submitted.reviewContent);
+
+  // Opening a different view does not rewrite the last saved review's scope.
+  const reopened = await loadRepo(server.url, repoPath);
+  assert.equal((await loadReviewDocument(server.reviewsDir, repoPath)).untracked, false);
+  await post('save-comments', { repoId: reopened.repoId, comments: saved.comments });
+  const reset = await post('submit-review', { repoId: reopened.repoId });
+  for (const document of [reset.review, await loadReviewDocument(server.reviewsDir, repoPath)]) {
+    assert.equal('untracked' in document, false);
+    assert.doesNotMatch(formatPrompt(document), /Untracked files are excluded/);
+  }
+  assert.equal('untracked' in JSON.parse(await fs.readFile(savedPath, 'utf8')), false);
+  assert.doesNotMatch(reset.reviewContent, /Untracked files are excluded/);
+});
+
 test('the untracked option preserves staged and commit comparison scopes', async t => {
   const server = await startTestServer();
   const repoPath = await createTempRepo();
@@ -250,6 +302,22 @@ test('the untracked option preserves staged and commit comparison scopes', async
     const rangeDiff = await (await fetch(`${server.url}/api/file/${range.repoId}/app.js`)).json();
     assert.match(JSON.stringify(rangeDiff.diffLines), /committed/);
     assert.doesNotMatch(JSON.stringify(rangeDiff.diffLines), /staged/);
+    for (const scope of [staged, range]) {
+      const savedResponse = await fetch(`${server.url}/api/save-comments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoId: scope.repoId, comments: [
+          { file: 'app.js', line: 1, lineContent: 'before', text: 'Check this edit.' }
+        ] })
+      });
+      assert.equal(savedResponse.status, 200);
+      await savedResponse.json();
+      const saved = JSON.parse(await fs.readFile(path.join(server.reviewsDir, commentsFilename(repoPath)), 'utf8'));
+      assert.equal('untracked' in saved, false);
+      const document = await loadReviewDocument(server.reviewsDir, repoPath);
+      assert.equal(document.mode, scope.mode);
+      assert.equal('untracked' in document, false);
+      assert.doesNotMatch(formatPrompt(document), /Untracked files are excluded/);
+    }
   }
 });
 
