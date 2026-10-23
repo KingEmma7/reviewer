@@ -3,7 +3,7 @@
 [![CI](https://github.com/dheerajjha/reviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/dheerajjha/reviewer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-387-brightgreen.svg)](test/)
+[![Tests](https://img.shields.io/badge/tests-406-brightgreen.svg)](test/)
 [![Dependencies](https://img.shields.io/badge/dependencies-3-brightgreen.svg)](package.json)
 
 **English** · [简体中文](docs/README.zh-CN.md) · [日本語](docs/README.ja.md)
@@ -81,6 +81,7 @@ git reviewer export [repository] [--format json|prompt]
       --no-open     Print the URL instead of opening a browser
       --no-intro    Open the review without the first-run help
       --staged      Review only staged changes (HEAD vs index)
+      --no-untracked Review tracked working-tree changes only
   -f, --format <f>  Export format: json (default) or prompt
   -h, --help        Show help
   -v, --version     Show the version
@@ -103,6 +104,15 @@ this as a staged review. The default command still shows all working-tree
 changes. As with the default view, reload after changing what is staged. Saved comments
 are shared between views and may refer to code outside the current comparison;
 check their anchors before applying them.
+
+Wholly untracked directories with more than 200 files appear as one directory
+row with a file count and no diff. Smaller directories stay reviewable file by
+file. Tracked changes are always listed individually, and `.gitignore` still
+applies. The scope note names any folded directories and their counts.
+
+Use `git reviewer --no-untracked` to exclude all untracked files. If there are
+no tracked working-tree changes, the view stays empty instead of loading the
+last commit. Staged and commit comparisons keep their usual behavior.
 
 ### When you are not standing in a repository
 
@@ -399,6 +409,10 @@ The UI is a client of this; nothing is hidden from you.
 
 To review a commit range, use `"commits": {"from":"abc123","to":"def456"}` instead of `base`/`head`. To review staged changes, use `"staged": true` without comparison fields. `head` is optional when using `base`.
 
+For tracked working-tree changes only, send `"untracked": false`. It defaults
+to `true`. Folded directory entries carry `directory: true` and `fileCount`;
+they have no file diff.
+
 `POST /api/save-comments` persists comments for an open session:
 
 ```json
@@ -449,7 +463,7 @@ rather than a public issue.
 
 ```bash
 npm install           # 3 dependencies, no build step, ~6MB
-npm test              # 387 tests
+npm test              # 406 tests
 npm run test:watch
 npm run test:coverage
 ```

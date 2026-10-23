@@ -53,6 +53,55 @@ test('collectWorkingChanges handles a clean tree', () => {
   assert.deepEqual(collectWorkingChanges(undefined), []);
 });
 
+test('collectWorkingChanges folds a large untracked directory without hiding tracked changes', () => {
+  const changes = collectWorkingChanges({
+    not_added: [
+      ...Array.from({ length: 3000 }, (_, i) => `output/nested/file-${i}.txt`),
+      'output-neighbor/keep.js', 'small/one.js', 'small/two.js'
+    ],
+    modified: ['app.js', 'output/tracked.js']
+  }, ['output/', 'output-neighbor/', 'small/']);
+
+  assert.deepEqual(changes, [
+    { path: 'output/', status: 'A', directory: true, fileCount: 3000 },
+    { path: 'output-neighbor/keep.js', status: 'A' },
+    { path: 'small/one.js', status: 'A' },
+    { path: 'small/two.js', status: 'A' },
+    { path: 'app.js', status: 'M' },
+    { path: 'output/tracked.js', status: 'M' }
+  ]);
+});
+
+test('collectWorkingChanges leaves 200 untracked files individual and folds 201', () => {
+  const files = Array.from({ length: 201 }, (_, i) => `folder/file-${i}.txt`);
+  assert.equal(collectWorkingChanges({ not_added: files.slice(0, 200) }, ['folder/']).length, 200);
+  assert.deepEqual(collectWorkingChanges({ not_added: files }, ['folder/']), [
+    { path: 'folder/', status: 'A', directory: true, fileCount: 201 }
+  ]);
+});
+
+test('collectWorkingChanges only folds directories identified as wholly untracked by Git', () => {
+  const files = Array.from({ length: 201 }, (_, i) => `mixed/file-${i}.txt`);
+  const changes = collectWorkingChanges({ not_added: files, modified: ['mixed/tracked.js'] }, []);
+  assert.equal(changes.length, 202);
+  assert.equal(changes.some(file => file.directory), false);
+  assert.deepEqual(changes.at(-1), { path: 'mixed/tracked.js', status: 'M' });
+});
+
+test('collectWorkingChanges counts each untracked path once in a folded directory', () => {
+  const files = Array.from({ length: 201 }, (_, i) => `folder/file-${i}.txt`);
+  assert.deepEqual(collectWorkingChanges({ not_added: [...files, ...files] }, ['folder/']), [
+    { path: 'folder/', status: 'A', directory: true, fileCount: 201 }
+  ]);
+});
+
+test('collectWorkingChanges folds quoted Unicode directory paths with their decoded names', () => {
+  const files = Array.from({ length: 201 }, (_, i) => `"caf\\303\\251 \\"output\\"/file-${i}.txt"`);
+  assert.deepEqual(collectWorkingChanges({ not_added: files }, ['"caf\\303\\251 \\"output\\"/"']), [
+    { path: 'café "output"/', status: 'A', directory: true, fileCount: 201 }
+  ]);
+});
+
 test('classifyCommitFile reads insertion and deletion counts', () => {
   assert.equal(classifyCommitFile({ insertions: 5, deletions: 2 }), 'M');
   assert.equal(classifyCommitFile({ insertions: 5, deletions: 0 }), 'A');

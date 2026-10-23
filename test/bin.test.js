@@ -267,6 +267,34 @@ test('it serves a staged review of the requested repository, then stops on SIGIN
   await exited;
 });
 
+test('--no-untracked serves tracked changes through the URL printed by the command', async t => {
+  const repoPath = await createTempRepo();
+  t.after(() => cleanup(repoPath));
+  await commitFiles(repoPath, { 'app.js': 'before\n' }, 'initial');
+  await writeFiles(repoPath, { 'app.js': 'after\n', 'scratch/new.js': 'untracked\n' });
+
+  const { url, child, stdout } = await serve([repoPath, '--no-untracked', '--no-intro']);
+  t.after(() => child.kill('SIGKILL'));
+  const address = new URL(url);
+  assert.equal(address.searchParams.get('repo'), repoPath);
+  assert.equal(address.searchParams.get('untracked'), '0');
+  assert.equal(address.searchParams.get('intro'), '0');
+  assert.equal(stdout(), '\n', 'the startup banner does not enter the review pipe');
+
+  const response = await fetch(new URL('/api/load-repo', address), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      repoPath: address.searchParams.get('repo'),
+      untracked: address.searchParams.get('untracked') !== '0'
+    })
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.mode, 'working');
+  assert.deepEqual(body.files, [{ path: 'app.js', status: 'M' }]);
+});
+
 test('the package installs the command under both of its names', () => {
   // The package is published as `git-reviewer`, so `git-reviewer` is what a
   // reader of the install line types next — and until this entry existed, that

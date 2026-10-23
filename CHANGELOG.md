@@ -8,7 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Large wholly untracked directories no longer bury tracked changes in the
+  file list. Directories containing more than 200 files fold into one row
+  with a count and no diff; smaller directories stay listed file by file.
 - `reviewer export` explains when a path is outside a Git repository and has no saved review.
+
+### Added
+
+- `--no-untracked` reviews tracked working-tree changes only, keeping an empty
+  view when there are none. API clients can pass `untracked: false` to
+  `POST /api/load-repo`.
 
 ## [2.14.1] - 2026-10-18
 

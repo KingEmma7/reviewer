@@ -258,7 +258,8 @@ async function main() {
     `http://${DEFAULT_HOST}:${port}`,
     repoPath,
     options.staged,
-    options.noIntro
+    options.noIntro,
+    options.untracked
   );
 
   if (options.json) {
