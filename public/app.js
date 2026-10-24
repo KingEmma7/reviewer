@@ -496,7 +496,11 @@ function renderScope(data) {
   } else {
     label.append(data.mode === 'staged' ? 'Staged changes' : 'Uncommitted changes');
     if (branch) label.append(' on ', strong(branch));
-    meta.textContent = plural(data.files.length, 'file') + ' changed';
+    const folders = data.files.filter(file => file.directory);
+    const foldedFiles = folders.reduce((sum, file) => sum + file.fileCount, 0);
+    meta.textContent = plural(data.files.length - folders.length, 'file') + ' changed' + (folders.length
+      ? `; ${plural(folders.length, 'folder')} folded (${foldedFiles.toLocaleString('en-US')} untracked files)`
+      : '');
     setNote(data.mode === 'staged'
       ? 'The diff excludes unstaged changes. Saved comments are shared between views and may refer to other code; check their anchors.'
       : data.files.some(file => file.directory) ? data.message
@@ -970,7 +974,11 @@ function displayFiles(files) {
     </div>`;
   }).join('');
 
-  fileCount.textContent = `${files.length} file${files.length !== 1 ? 's' : ''}`;
+  const folders = files.filter(file => file.directory).length;
+  const individualFiles = files.length - folders;
+  fileCount.textContent = `${individualFiles} file${individualFiles !== 1 ? 's' : ''}` + (folders
+    ? ` · ${folders} folder${folders !== 1 ? 's' : ''}`
+    : '');
   sidebar.classList.remove('hidden');
   resizeHandle.classList.remove('hidden');
   submitBtn.classList.remove('hidden');

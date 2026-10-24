@@ -20,6 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `POST /api/load-repo`.
   Saved reviews, JSON exports, agent prompts and text reviews retain and explain
   that tracked-only comparison, including when older comments came from another view.
+- Working-review counts separate individual files from folded folders and the
+  untracked files they contain. Tracked changes appear before untracked rows,
+  opening first unless a previously selected path is still present.
 
 ## [2.14.1] - 2026-10-18
 

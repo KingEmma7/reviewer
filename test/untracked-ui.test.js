@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { collectWorkingChanges } = require('../lib/changes');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 
@@ -80,11 +81,54 @@ test('the scope note keeps the names and counts of folded directories visible', 
   const render = lift('renderScope', {
     document, currentRefs: null, commitContext: null, plural: (n, word) => `${n} ${word}`
   });
-  const message = 'Found 2 changed file(s). dd/ holds 3,000 untracked files; individual files are not listed.';
+  const message = 'Found 1 changed file; 1 folder folded (3,000 untracked files). dd/ holds 3,000 untracked files; individual files are not listed.';
   render({ mode: 'working', files: [
     { path: 'dd/', directory: true, fileCount: 3000 }, { path: 'app.js' }
   ], message });
   assert.equal(document.getElementById('scopeNote').textContent, message);
+});
+
+test('the scope bar counts files and folded folders separately and clears old totals', () => {
+  const document = dom();
+  const render = lift('renderScope', {
+    document, currentRefs: null, commitContext: null,
+    plural: (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  });
+  const folders = [3000, 201, 250, 201].map((fileCount, i) => ({ path: `fold-${i}/`, directory: true, fileCount }));
+  const files = Array.from({ length: 204 }, (_, i) => ({ path: `file-${i}` }));
+  render({ mode: 'working', files: [...files, ...folders], message: 'Folder details' });
+  const meta = document.getElementById('scopeMeta');
+  assert.equal(meta.textContent, '204 files changed; 4 folders folded (3,652 untracked files)');
+  render({ mode: 'working', files: [folders[0]], message: 'Folder details' });
+  assert.equal(meta.textContent, '0 files changed; 1 folder folded (3,000 untracked files)');
+  for (const mode of ['working', 'staged']) {
+    for (const count of [0, 1, 3]) {
+      render({ mode, files: files.slice(0, count) });
+      assert.equal(meta.textContent, `${count} file${count === 1 ? '' : 's'} changed`);
+      assert.doesNotMatch(document.getElementById('scopeNote').textContent, /Folder details/);
+    }
+  }
+  render({ mode: 'lastCommit', files: files.slice(0, 1) });
+  assert.equal(meta.textContent, '');
+  assert.equal(document.getElementById('scopeNote').textContent, '');
+});
+
+test('working loads open tracked edits first and preserve an explicitly selected untracked file', async () => {
+  const cases = [
+    [{ modified: ['app.js'], not_added: ['scratch.js'] }, null, 'app.js'],
+    [{ created: ['staged.js'], not_added: ['scratch.js'] }, null, 'staged.js'],
+    [{ modified: ['app.js'], not_added: ['scratch.js'] }, 'scratch.js', 'scratch.js'],
+    [{ not_added: ['scratch.js', 'other.js'] }, null, 'scratch.js']
+  ];
+  for (const [status, selected, expected] of cases) {
+    const files = collectWorkingChanges(status);
+    const context = loadContext({ repoId: 'one', mode: 'working', files });
+    context.currentFile = selected;
+    let opened;
+    context.loadFile = file => { opened = file; };
+    await lift('loadRepo', context)();
+    assert.equal(opened, expected);
+  }
 });
 
 test('a folded directory row shows its count and escapes the folder name', () => {
@@ -99,6 +143,16 @@ test('a folded directory row shows its count and escapes the folder name', () =>
   assert.match(html, /3,000 files/);
   assert.match(html, /café&lt;folder>/);
   assert.doesNotMatch(html, /café<folder>/);
+  assert.equal(document.getElementById('fileCount').textContent, '0 files · 1 folder');
+  display([
+    ...Array.from({ length: 204 }, (_, i) => ({ path: `file-${i}`, status: 'A' })),
+    ...[3000, 201, 250, 201].map((fileCount, i) => ({ path: `folder-${i}/`, status: 'A', directory: true, fileCount }))
+  ]);
+  assert.equal(document.getElementById('fileCount').textContent, '204 files · 4 folders');
+  for (const count of [0, 1, 3]) {
+    display(Array.from({ length: count }, (_, i) => ({ path: `file-${i}`, status: 'M' })));
+    assert.equal(document.getElementById('fileCount').textContent, `${count} file${count === 1 ? '' : 's'}`);
+  }
 });
 
 test('opening a folded directory shows an explanation without requesting a diff or full context', async () => {
@@ -118,13 +172,15 @@ test('opening a folded directory shows an explanation without requesting a diff 
 });
 
 test('a folded first row does not hide the first reviewable file on load', async () => {
-  const context = loadContext({ repoId: 'one', mode: 'working', files: [
-    { path: 'dd/', directory: true, fileCount: 3000 }, { path: 'app.js', status: 'M' }
-  ] });
-  let opened;
-  context.loadFile = file => { opened = file; };
-  await lift('loadRepo', context)();
-  assert.equal(opened, 'app.js');
+  for (const file of [{ path: 'app.js', status: 'M' }, { path: 'scratch.js', status: 'A' }, null]) {
+    const context = loadContext({ repoId: 'one', mode: 'working', files: [
+      { path: 'dd/', directory: true, fileCount: 3000 }, ...(file ? [file] : [])
+    ] });
+    let opened;
+    context.loadFile = path => { opened = path; };
+    await lift('loadRepo', context)();
+    assert.equal(opened, file?.path ?? 'dd/');
+  }
 });
 
 test('a pending file response cannot replace a newly selected folded directory', async () => {

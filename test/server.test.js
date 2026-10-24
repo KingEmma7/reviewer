@@ -135,7 +135,7 @@ test('POST /api/load-repo lists working directory changes', async t => {
   const body = await loadRepo(server.url, repoPath);
 
   assert.equal(body.mode, 'working');
-  assert.match(body.message, /Found 2 changed file\(s\)/);
+  assert.equal(body.message, 'Found 2 changed files');
   assert.deepEqual(
     [...body.files].sort((a, b) => a.path.localeCompare(b.path)),
     [{ path: 'app.js', status: 'M' }, { path: 'new.js', status: 'A' }]
@@ -168,7 +168,7 @@ test('POST /api/load-repo folds 3000 nested untracked files and serves the folde
   assert.deepEqual(body.files.filter(file => !file.directory).map(file => file.path).sort(), [
     'app.js', 'café 日本-neighbor/keep.js', 'mixed/new.js', 'mixed/tracked.js', 'small/one.js', 'small/two.js'
   ]);
-  assert.equal(body.message, `Found 7 changed file(s). ${folder} holds 3,000 untracked files; individual files are not listed.`);
+  assert.equal(body.message, `Found 6 changed files; 1 folder folded (3,000 untracked files). ${folder} holds 3,000 untracked files; individual files are not listed.`);
   const diff = await (await fetch(`${server.url}/api/file/${body.repoId}/${encodeURIComponent(folder)}`)).json();
   assert.deepEqual(diff, { filePath: folder, directory: true, fileCount: 3000, binary: false, diffLines: [] });
   const full = await (await fetch(`${server.url}/api/file-full/${body.repoId}/${encodeURIComponent(folder)}`)).json();
@@ -177,6 +177,47 @@ test('POST /api/load-repo folds 3000 nested untracked files and serves the folde
   assert.match(JSON.stringify(small.diffLines), /one/);
   const tracked = await (await fetch(`${server.url}/api/file/${body.repoId}/app.js`)).json();
   assert.match(JSON.stringify(tracked.diffLines), /after/);
+});
+
+test('folded folders are counted separately from the files still available to review', async t => {
+  const server = await startTestServer();
+  const repoPath = await createTempRepo();
+  t.after(async () => { await server.close(); await cleanup(repoPath); });
+  await commitFiles(repoPath, { 'a.js': 'before\n', 'ios/code.js': 'tracked\n' }, 'initial');
+  // Windows does not permit angle brackets in directory names.
+  const markupFolder = process.platform === 'win32' ? 'markup&folder/' : '<markup&folder>/';
+  const foldedCounts = { 'dd/': 3000, 'b201/': 201, 'ios/DerivedData/': 250, [markupFolder]: 201 };
+  const files = {
+    'a.js': 'after\n',
+    'src/feature/one.js': 'one\n',
+    'src/feature/two.js': 'two\n',
+    'src/feature/three.js': 'three\n'
+  };
+  for (const [folder, count] of Object.entries({ ...foldedCounts, 'b200/': 200 })) {
+    for (let i = 0; i < count; i++) files[`${folder}file-${i}.txt`] = 'new\n';
+  }
+  await writeFiles(repoPath, files);
+
+  const body = await loadRepo(server.url, repoPath);
+  const reviewable = body.files.filter(file => !file.directory);
+  const folded = body.files.filter(file => file.directory);
+  assert.equal(body.mode, 'working');
+  assert.deepEqual(body.files[0], { path: 'a.js', status: 'M' });
+  assert.equal(reviewable.length, 204);
+  assert.equal(folded.length, 4);
+  assert.deepEqual(Object.fromEntries(folded.map(file => [file.path, file.fileCount])), foldedCounts);
+  assert.equal(reviewable.filter(file => file.path.startsWith('b200/')).length, 200);
+  assert.equal(reviewable.filter(file => file.path.startsWith('src/feature/')).length, 3);
+  assert.deepEqual(reviewable.find(file => file.path === 'a.js'), { path: 'a.js', status: 'M' });
+  assert.ok(body.message.startsWith('Found 204 changed files; 4 folders folded (3,652 untracked files). '), body.message);
+  for (const [folder, count] of Object.entries(foldedCounts)) {
+    assert.ok(body.message.includes(`${folder} holds ${count.toLocaleString('en-US')} untracked files; individual files are not listed.`));
+  }
+
+  const { body: trackedOnly } = await loadScope(server.url, { repoPath, untracked: false });
+  assert.deepEqual(trackedOnly.files, [{ path: 'a.js', status: 'M' }]);
+  assert.equal(trackedOnly.message, 'Found 1 changed file — untracked files hidden');
+  assert.doesNotMatch(trackedOnly.message, /folders? folded/);
 });
 
 test('POST /api/load-repo excludes untracked files without asking Git to enumerate them', async t => {
